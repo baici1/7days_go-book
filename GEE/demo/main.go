@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"gee"
 	"net/http"
 )
@@ -27,16 +26,37 @@ func main() {
 	// http.HandleFunc("/hello", helloHandler)
 	// log.Fatal(http.ListenAndServe(":9999", nil))
 
+	// //创建实例
+	// r := gee.Default()
+	// //下面就是路由  参照gin框架
+	// r.GET("/", func(w http.ResponseWriter, r *http.Request) {
+	// 	fmt.Printf("Path=%q\n", r.URL.Path)
+	// })
+	// r.GET("/hello", func(w http.ResponseWriter, r *http.Request) {
+	// 	for k, v := range r.Header {
+	// 		fmt.Printf("Header[%q]=%q\n", k, v)
+	// 	}
+	// })
+	// //跑项目
+	// r.Run(":9999")
+	//Days2
+	//封装request与response
 	//创建实例
 	r := gee.Default()
 	//下面就是路由  参照gin框架
-	r.GET("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("Path=%q\n", r.URL.Path)
+	r.GET("/", func(c *gee.Context) {
+		c.HTML(http.StatusOK, "<h1>Hello Gee</h1>")
 	})
-	r.GET("/hello", func(w http.ResponseWriter, r *http.Request) {
-		for k, v := range r.Header {
-			fmt.Printf("Header[%q]=%q\n", k, v)
-		}
+	r.GET("/hello", func(c *gee.Context) {
+		// expect /hello?name=geektutu
+		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
+	})
+
+	r.POST("/login", func(c *gee.Context) {
+		c.JSON(http.StatusOK, gee.H{
+			"username": c.PostForm("username"),
+			"password": c.PostForm("password"),
+		})
 	})
 	//跑项目
 	r.Run(":9999")
