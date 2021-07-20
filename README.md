@@ -464,3 +464,228 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 将`router`相关的代码独立后，`gee.go`简单了不少。最重要的还是通过实现了 ServeHTTP 接口，接管了所有的 HTTP 请求。相比第一天的代码，这个方法也有细微的调整，在调用 router.handle 之前，构造了一个 Context 对象。这个对象目前还非常简单，仅仅是包装了原来的两个参数，之后我们会慢慢地给Context插上翅膀。
 
 时间：2021/7/19
+
+## Days3 动态路由
+
+我们用了一个非常简单的`map`结构存储了路由表，使用`map`存储键值对，索引非常高效，但是有一个弊端，键值对的存储的方式，只能用来索引静态路由。
+
+其实我们到现在都没有去处理动态路由的功能，前面写的全是静态路由无法应对 `/hello/:name` 这样子的路由。
+
+动态路由有很多种实现方式，支持的规则、性能等有很大的差异。例如开源的路由实现`gorouter`支持在路由规则中嵌入正则表达式，例如`/p/[0-9A-Za-z]+`，即路径中的参数仅匹配数字和字母；另一个开源实现`httprouter`就不支持正则表达式。著名的Web开源框架`gin` 在早期的版本，并没有实现自己的路由，而是直接使用了`httprouter`，后来不知道什么原因，放弃了`httprouter`，自己实现了一个版本。
+
+![image](https://cdn.nlark.com/yuque/0/2021/jpeg/21455688/1626800824398-b992bd8b-0b8c-4fa0-9b9d-5618927cac38.jpeg)
+
+实现动态路由最常用的数据结构，被称为前缀树(Trie树)。看到名字你大概也能知道前缀树长啥样了：每一个节点的所有的子节点都拥有相同的前缀。这种结构非常适用于路由匹配，比如我们定义了如下路由规则：
+
+- /:lang/doc
+- /:lang/tutorial
+- /:lang/intro
+- /about
+- /p/blog
+- /p/related
+
+我们用前缀树来表示，是这样的。
+
+![image](https://cdn.nlark.com/yuque/0/2021/jpeg/21455688/1626800824381-cf3f2de0-3647-4a2d-9b7e-9ef3357aac9b.jpeg)
+
+HTTP请求的路径恰好是由`/`分隔的多段构成的，因此，每一段可以作为前缀树的一个节点。我们通过树结构查询，如果中间某一层的节点都不满足条件，那么就说明没有匹配到的路由，查询结束。
+
+接下来我们实现的动态路由具备以下两个功能。
+
+- 参数匹配`:`。例如 `/p/:lang/doc`，可以匹配 `/p/c/doc` 和 `/p/go/doc`。
+- 通配`*`。例如 `/static/*filepath`，可以匹配`/static/fav.ico`，也可以匹配`/static/js/jQuery.js`，这种模式常用于静态服务器，能够递归地匹配子路径。
+
+
+
+### Trie 树实现
+
+```
+package gee
+
+import "strings"
+
+//实现动态路由最常用的数据结构，被称为前缀树(Trie树)。
+//前缀树路由，每个节点的信息
+type node struct {
+    pattern  string  //待匹配的路由 例如 /p/:lang
+    part     string  // 路由中的一部分，例如 :lang
+    children []*node //子节点，例如 [doc, tutorial, intro]
+    isWild   bool    // 是否精确匹配，part 含有 : 或 * 时为true
+}
+
+// 单个匹配成功的节点，用于插入
+func (n *node) matchChild(part string) *node {
+    for _, child := range n.children {
+        if child.part == part || child.isWild {
+            return child
+        }
+    }
+    return nil
+}
+
+// 所有匹配成功的节点，用于查找
+func (n *node) matchChildren(part string) []*node {
+    nodes := make([]*node, 0)
+    for _, child := range n.children {
+        if child.part == part || child.isWild {
+            nodes = append(nodes, child)
+        }
+    }
+    return nodes
+}
+//路由插入（注册）
+//不断查询每个路由的部分（以/分割的部分）如果有跳过，没有就添加子节点，直到全部完成
+func (n *node) insert(pattern string, parts []string, height int) {
+    if len(parts) == height {
+        n.pattern = pattern
+        return
+    }
+    part := parts[height]
+    child := n.matchChild(part)
+    if child == nil {
+        child = &node{part: part, isWild: part[0] == ':' || part[0] == '*'}
+        n.children = append(n.children, child)
+    }
+    child.insert(pattern, parts, height+1)
+}
+
+//路由查询（匹配）
+//递归法进行匹配  从根节点获取子节点 子节点查询直到都匹配成功
+//退出要求 1.匹配到了* 2.pattern==“” （没有结束）3.匹配到最后一个节点
+func (n *node) search(parts []string, height int) *node {
+    if len(parts) == height || strings.HasPrefix(n.part, "*") { //strings.HasPrefix()函数用来检测字符串是否以指定的前缀开头。
+        if n.pattern == "" {
+            return nil
+        }
+        return n
+    }
+    part := parts[height]
+    children := n.matchChildren(part)
+    for _, child := range children {
+        result := child.search(parts, height+1)
+        if result != nil {
+            return result
+        }
+    }
+    return nil
+}
+```
+
+前面两个只是一个辅助函数，重要的是后面两个函数。
+
+路由最重要的是注册和匹配，那么对于Tire树而言，那就是插入和查询。
+
+插入：对于路由路径每个部分进行单个匹配，如果没有就创建和加入子节点。如果有那就往下继续匹配，直到完成，获取路由路径
+
+查询：每一层进行递归查询，直到找到路由地址
+
+
+
+我们既然创建了Tire树，那么路由那边肯定也需要一点变化。
+
+### Router变化
+
+```
+type router struct {
+    roots    map[string]*node //建立一个前缀树路由 去映射handler
+    handlers map[string]HandlerFunc
+}
+
+func newRouter() *router {
+    return &router{
+        roots:    make(map[string]*node),
+        handlers: make(map[string]HandlerFunc)}
+}
+```
+
+先更新路由，建立前缀树路由
+
+```
+//作用主要是分割路由地址（以/分割成各个部分）
+func parsePattern(pattern string) []string {
+    vs := strings.Split(pattern, "/")
+    parts := make([]string, 0)
+    for _, item := range vs {
+        if item != "" {
+            parts = append(parts, item)
+            if item[0] == '*' {
+                break
+            }
+        }
+
+    }
+    return parts
+}
+func (r *router) addRoute(method string, pattern string, handler HandlerFunc) {
+    parts := parsePattern(pattern)
+    log.Printf("Route %4s - %s", method, pattern)
+    key := method + "-" + pattern
+    _, ok := r.roots[method] //可以添加自定义的请求方式
+    if !ok {
+        r.roots[method] = &node{}
+    }
+    r.roots[method].insert(pattern, parts, 0) //注册路由
+    r.handlers[key] = handler
+}
+//获取路由以及匹配字段（param）值
+func (r *router) getRoute(method string, path string) (*node, map[string]string) {
+    searchParts := parsePattern(path) //拿到请求地址每个部分
+    params := make(map[string]string)
+    root, ok := r.roots[method] //从请求方式作为根节点找
+    if !ok {
+        return nil, nil
+    }
+    n := root.search(searchParts, 0) //匹配 如果匹配成功就会返回子节点（最小的）
+    if n != nil {
+        parts := parsePattern(n.pattern) //拿到子节点路由的每个部分
+        for index, part := range parts { //请求地址和路由地址进行匹配（：和*）
+            if part[0] == ':' {
+                params[part[1:]] = searchParts[index] //将请求地址的值与路由地址的params进行映射
+            }
+            if part[0] == '*' && len(part) > 1 {
+                params[part[1:]] = strings.Join(searchParts[index:], "/")
+                break
+            }
+        }
+        return n, params
+    }
+    return nil, nil
+}
+func (r *router) handle(c *Context) {
+    n, params := r.getRoute(c.Method, c.Path) //获取请求地址和params值
+    if n != nil {
+        c.Params = params
+        key := c.Method + "-" + n.pattern
+        r.handlers[key](c) //映射对应的handler
+    } else {
+        c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
+    }
+}
+```
+
+上面每个部分都写了注释的。
+
+Context与handle的变化
+
+在 HandlerFunc 中，希望能够访问到解析的参数，因此，需要对 Context 对象增加一个属性和方法，来提供对路由参数的访问。我们将解析后的参数存储到Params中，通过c.Param("lang")的方式获取到对应的值。
+
+```
+type Context struct {
+    // origin objects
+    Writer http.ResponseWriter
+    Req    *http.Request
+    // request info
+    Path   string
+    Method string
+    Params map[string]string
+    // response info
+    StatusCode int
+}
+
+func (c *Context) Param(key string) string {
+    value, _ := c.Params[key]
+    return value
+}
+```
+
+时间：2021/7/20
