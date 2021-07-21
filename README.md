@@ -20,7 +20,7 @@
 
 go中是内置了 `http` 库的。最原生的写web应用其实就是用的是 `http` 库
 
-```
+```go
 package main
 
 import (
@@ -72,7 +72,7 @@ func helloHandler(w http.ResponseWriter, req *http.Request) {
 
 根据上面的原理，我们就可以自己简单封装 `http` 库
 
-```
+```go
 package main
 
 import (
@@ -133,7 +133,7 @@ replace gee => ../gee
 
 ### 2.本地文件代码
 
-```
+```go
 package main
 
 import (
@@ -193,7 +193,7 @@ func main() {
 
 ### 3.gee包的基本架构
 
-```
+```go
 package gee
 
 import (
@@ -262,7 +262,7 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 封装前
 
-```
+```go
 obj = map[string]interface{}{
     "name": "geektutu",
     "password": "1234",
@@ -277,7 +277,7 @@ if err := encoder.Encode(obj); err != nil {
 
 封装后
 
-```
+```go
 c.JSON(http.StatusOK, gee.H{
     "username": c.PostForm("username"),
     "password": c.PostForm("password"),
@@ -303,7 +303,7 @@ c.JSON(http.StatusOK, gee.H{
 
 
 
-```
+```go
 package gee
 
 import (
@@ -395,7 +395,7 @@ func (c *Context) HTML(code int, html string) {
 
 第一天的代码，路由仅仅完成了查找和绑定函数的在作用，还有其他的功能并未写上，所以为了解耦以及增强路由功能，简化代码，我们将路由方法和结构提取出来。方便后面对路由进行加强
 
-```
+```go
 type router struct {
     handlers map[string]HandlerFunc
 }
@@ -422,7 +422,7 @@ func (r *router) handle(c *Context) {
 
 我们增加了上下文Context以及提取了路由，那么主文件我们也需要进行改变。
 
-```
+```go
 // HandlerFunc defines the request handler used by gee
 type HandlerFunc func(*Context)
 
@@ -499,7 +499,7 @@ HTTP请求的路径恰好是由`/`分隔的多段构成的，因此，每一段�
 
 ### Trie 树实现
 
-```
+```go
 package gee
 
 import "strings"
@@ -585,7 +585,7 @@ func (n *node) search(parts []string, height int) *node {
 
 ### Router变化
 
-```
+```go
 type router struct {
     roots    map[string]*node //建立一个前缀树路由 去映射handler
     handlers map[string]HandlerFunc
@@ -600,7 +600,7 @@ func newRouter() *router {
 
 先更新路由，建立前缀树路由
 
-```
+```go
 //作用主要是分割路由地址（以/分割成各个部分）
 func parsePattern(pattern string) []string {
     vs := strings.Split(pattern, "/")
@@ -669,7 +669,7 @@ Context与handle的变化
 
 在 HandlerFunc 中，希望能够访问到解析的参数，因此，需要对 Context 对象增加一个属性和方法，来提供对路由参数的访问。我们将解析后的参数存储到Params中，通过c.Param("lang")的方式获取到对应的值。
 
-```
+```go
 type Context struct {
     // origin objects
     Writer http.ResponseWriter
@@ -689,3 +689,122 @@ func (c *Context) Param(key string) string {
 ```
 
 时间：2021/7/20
+
+## Days4 分组路由
+
+### 分组意义
+
+分组控制(Group Control)是 Web 框架应提供的基础功能之一。所谓分组，是指路由的分组。如果没有路由分组，我们需要针对每一个路由进行控制。但是真实的业务场景中，往往某一组路由需要相似的处理。例如：
+
+- 以`/post`开头的路由匿名可访问。
+- 以`/admin`开头的路由需要鉴权。
+- 以`/api`开头的路由是 RESTful 接口，可以对接第三方平台，需要三方平台鉴权。
+
+大部分情况下的路由分组，是以相同的前缀来区分的。因此，我们今天实现的分组控制也是以前缀来区分，并且支持分组的嵌套。例如`/post`是一个分组，`/post/a`和`/post/b`可以是该分组下的子分组。作用在`/post`分组上的中间件(middleware)，也都会作用在子分组，子分组还可以应用自己特有的中间件。
+
+简单的来讲就是将路由进行分组，方便提供重复的中间件，便于查询路由，将路由进行分类处理。
+
+
+
+### Group
+
+分组路由所必须有的功能
+
+- 分组嵌套
+- 可以承担中间件
+- 提供接口
+
+
+
+根据功能分析路由有哪些属性
+
+- 前缀
+- 父亲
+- 中间件
+- engine（为了调用接口）
+
+
+
+```go
+//路由分组
+//满足的条件
+//1.前缀 ----分组的路径
+//2.具有中间件
+//3.可以进行嵌套
+//4.提供分组的接口
+type RouterGroup struct {
+    prefix      string
+    middlewares []HandlerFunc
+    parent      *RouterGroup
+    engine      *Engine
+}
+```
+
+
+
+进一步抽象，将`Engine`作为最顶层的分组，也就是说`Engine`拥有`RouterGroup`所有的能力。
+
+```go
+type Engine struct {
+    //router map[string]HandlerFunc
+    *RouterGroup
+    router *router
+    groups []*RouterGroup //存所有分组路由
+}
+```
+
+相对应的变化
+
+```go
+//初始化，创建Engine实例
+func Default() *Engine {
+    //  return &Engine{router: make(map[string]HandlerFunc)}
+    //进行初始化
+    //此时engine是最顶层的分组，它可以调用RouterGroup的所有接口
+    engine := &Engine{router: newRouter()}
+    engine.RouterGroup = &RouterGroup{engine: engine}
+    engine.groups = []*RouterGroup{engine.RouterGroup}
+    return engine
+}
+
+//为分组创建一个engine
+func (group *RouterGroup) Group(prefix string) *RouterGroup {
+    engine := group.engine
+    newGroup := &RouterGroup{
+        prefix: group.prefix + prefix,
+        parent: group,
+        engine: engine,
+    }
+    engine.groups = append(engine.groups, newGroup)
+    return newGroup
+}
+
+//增加路由
+//将请求方式，路径，函数都添加到Engine结构体
+func (group *RouterGroup) addRoute(method string, comp string, handler HandlerFunc) {
+    // key := method + "-" + pattern
+    // engine.router[key] = handler
+
+    //engine.router.addRoute(method, pattern, handler)
+
+    pattern := group.prefix + comp
+    //log.Printf("Route %4s - %s", method, pattern)
+    group.engine.router.addRoute(method, pattern, handler)
+}
+
+//请求的方法
+//GET
+func (group *RouterGroup) GET(pattern string, handler HandlerFunc) {
+    group.addRoute("GET", pattern, handler)
+}
+
+//POST
+func (group *RouterGroup) POST(pattern string, handler HandlerFunc) {
+    group.addRoute("POST", pattern, handler)
+}
+```
+
+结合group使用，你会发现不同group他对应的engine都不同，像树往下进行分开。
+
+时间：2021/7/21
+

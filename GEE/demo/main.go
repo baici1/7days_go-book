@@ -62,25 +62,59 @@ func main() {
 	// r.Run(":9999")
 	//Days3
 	//创建实例
+	// 	r := gee.Default()
+	// 	//下面就是路由  参照gin框架
+	// 	r.GET("/", func(c *gee.Context) {
+	// 		c.HTML(http.StatusOK, "<h1>Hello Gee</h1>")
+	// 	})
+
+	// 	r.GET("/hello", func(c *gee.Context) {
+	// 		// expect /hello?name=geektutu
+	// 		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
+	// 	})
+
+	// 	r.GET("/hello/:name", func(c *gee.Context) {
+	// 		// expect /hello/geektutu
+	// 		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Param("name"), c.Path)
+	// 	})
+
+	// 	r.GET("/assets/*filepath", func(c *gee.Context) {
+	// 		c.JSON(http.StatusOK, gee.H{"filepath": c.Param("filepath")})
+	// 	})
+	// 	//跑项目
+	// 	r.Run(":9999")
+	// }
+	//Days4
 	r := gee.Default()
 	//下面就是路由  参照gin框架
-	r.GET("/", func(c *gee.Context) {
-		c.HTML(http.StatusOK, "<h1>Hello Gee</h1>")
+	r.GET("/index", func(c *gee.Context) {
+		c.HTML(http.StatusOK, "<h1>Index Page</h1>")
 	})
+	v1 := r.Group("/v1")
+	{
+		v1.GET("/", func(c *gee.Context) {
+			c.HTML(http.StatusOK, "<h1>Hello Gee</h1>")
+		})
 
-	r.GET("/hello", func(c *gee.Context) {
-		// expect /hello?name=geektutu
-		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
-	})
+		v1.GET("/hello", func(c *gee.Context) {
+			// expect /hello?name=geektutu
+			c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
+		})
+	}
+	v2 := r.Group("/v2")
+	{
+		v2.GET("/hello/:name", func(c *gee.Context) {
+			// expect /hello/geektutu
+			c.String(http.StatusOK, "hello %s, you're at %s\n", c.Param("name"), c.Path)
+		})
+		v2.POST("/login", func(c *gee.Context) {
+			c.JSON(http.StatusOK, gee.H{
+				"username": c.PostForm("username"),
+				"password": c.PostForm("password"),
+			})
+		})
 
-	r.GET("/hello/:name", func(c *gee.Context) {
-		// expect /hello/geektutu
-		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Param("name"), c.Path)
-	})
-
-	r.GET("/assets/*filepath", func(c *gee.Context) {
-		c.JSON(http.StatusOK, gee.H{"filepath": c.Param("filepath")})
-	})
+	}
 	//跑项目
 	r.Run(":9999")
 }

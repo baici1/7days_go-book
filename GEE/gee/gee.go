@@ -6,36 +6,73 @@ import (
 
 //包具体实现
 
+//路由分组
+//满足的条件
+//1.前缀 ----分组的路径
+//2.具有中间件
+//3.可以进行嵌套
+//4.提供分组的接口
+type RouterGroup struct {
+	prefix      string
+	middlewares []HandlerFunc
+	parent      *RouterGroup
+	engine      *Engine
+}
+
 //type HandlerFunc func(http.ResponseWriter, *http.Request)
 type HandlerFunc func(*Context)
 type Engine struct {
 	//router map[string]HandlerFunc
+	*RouterGroup
 	router *router
+	groups []*RouterGroup //存所有分组路由
 }
 
 //初始化，创建Engine实例
 func Default() *Engine {
 	//	return &Engine{router: make(map[string]HandlerFunc)}
-	return &Engine{router: newRouter()}
+	//进行初始化
+	//此时engine是最顶层的分组，它可以调用RouterGroup的所有接口
+	engine := &Engine{router: newRouter()}
+	engine.RouterGroup = &RouterGroup{engine: engine}
+	engine.groups = []*RouterGroup{engine.RouterGroup}
+	return engine
+}
+
+//为分组创建一个engine
+func (group *RouterGroup) Group(prefix string) *RouterGroup {
+	engine := group.engine
+	newGroup := &RouterGroup{
+		prefix: group.prefix + prefix,
+		parent: group,
+		engine: engine,
+	}
+	engine.groups = append(engine.groups, newGroup)
+	return newGroup
 }
 
 //增加路由
 //将请求方式，路径，函数都添加到Engine结构体
-func (engine *Engine) addRoute(method string, pattern string, handler HandlerFunc) {
+func (group *RouterGroup) addRoute(method string, comp string, handler HandlerFunc) {
 	// key := method + "-" + pattern
 	// engine.router[key] = handler
-	engine.router.addRoute(method, pattern, handler)
+
+	//engine.router.addRoute(method, pattern, handler)
+
+	pattern := group.prefix + comp
+	//log.Printf("Route %4s - %s", method, pattern)
+	group.engine.router.addRoute(method, pattern, handler)
 }
 
 //请求的方法
 //GET
-func (engine *Engine) GET(pattern string, handler HandlerFunc) {
-	engine.addRoute("GET", pattern, handler)
+func (group *RouterGroup) GET(pattern string, handler HandlerFunc) {
+	group.addRoute("GET", pattern, handler)
 }
 
 //POST
-func (engine *Engine) POST(pattern string, handler HandlerFunc) {
-	engine.addRoute("POST", pattern, handler)
+func (group *RouterGroup) POST(pattern string, handler HandlerFunc) {
+	group.addRoute("POST", pattern, handler)
 }
 
 //启动
