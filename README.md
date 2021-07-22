@@ -808,3 +808,147 @@ func (group *RouterGroup) POST(pattern string, handler HandlerFunc) {
 
 时间：2021/7/21
 
+## Days5 中间件
+
+### 中间件是什么
+
+中间件(middlewares)，简单说，就是非业务的技术类组件。Web 框架本身不可能去理解所有的业务，因而不可能实现所有的功能。因此，框架需要有一个插口，允许用户自己定义功能，嵌入到框架中，仿佛这个功能是框架原生支持的一样。因此，对中间件而言，需要考虑2个比较关键的点：
+
+- 插入点在哪？使用框架的人并不关心底层逻辑的具体实现，如果插入点太底层，中间件逻辑就会非常复杂。如果插入点离用户太近，那和用户直接定义一组函数，每次在 Handler 中手工调用没有多大的优势了。
+- 中间件的输入是什么？中间件的输入，决定了扩展能力。暴露的参数太少，用户发挥空间有限。
+
+
+
+### 中间件设计
+
+Gee 的中间件的定义与路由映射的 Handler 一致，处理的输入是`Context`对象。插入点是框架接收到请求初始化`Context`对象后，允许用户使用自己定义的中间件做一些额外的处理，例如记录日志等，以及对`Context`进行二次加工。另外通过调用`(*Context).Next()`函数，中间件可等待用户自己定义的 `Handler`处理结束后，再做一些额外的操作，例如计算本次处理所用时间等。即 Gee 的中间件支持用户在请求被处理的前后，做一些额外的操作。举个例子，我们希望最终能够支持如下定义的中间件，`c.Next()`表示等待执行其他的中间件或用户的`Handler.`
+
+中间件是应用在`RouterGroup`上的，应用在最顶层的 Group，相当于作用于全局，所有的请求都会被中间件处理。
+
+那为什么不作用在每一条路由规则上呢？
+
+ 作用在某条路由规则，那还不如用户直接在 Handler 中调用直观。只作用在某条路由规则的功能通用性太差，不适合定义为中间件。 
+
+我们之前的框架设计是这样的，当接收到请求后，匹配路由，该请求的所有信息都保存在`Context`中。中间件也不例外，接收到请求后，应查找所有应作用于该路由的中间件，保存在`Context`中，依次进行调用。
+
+为什么依次调用后，还需要在`Context`中保存呢？
+
+因为在设计中， 中间件不仅作用在处理流程前，也可以作用在处理流程后， 即在用户定义的 Handler 处理完毕后，还可以执行剩下的操作。
+
+那么根据上面我们来分析一下，中间件的执行过程
+
+```
+func A(c *Context) {
+    part1
+    c.Next()
+    part2
+}
+func B(c *Context) {
+    part3
+    c.Next()
+    part4
+}
+```
+
+这里定义了两个中间件A和B和路由映射的Handler 按照上面的说法，中间件的调用顺序应该是
+
+```
+part1->part3->handler->part4->part2
+```
+
+这样既可以满足处理流程前的工作，也可以处理流程结束的工作
+
+```
+type Context struct {
+    //起始结构
+    Writer http.ResponseWriter
+    Req    *http.Request
+    //请求信息
+    Path   string
+    Method string
+    Params map[string]string
+    //返回信息
+    StatusCode int
+    //中间件信息
+    handlers []HandlerFunc
+    index    int
+}
+func newContext(w http.ResponseWriter, req *http.Request) *Context {
+    return &Context{
+        Writer: w,
+        Req:    req,
+        Path:   req.URL.Path,
+        Method: req.Method,
+        index:  -1,
+    }
+}
+//next方法
+func (c *Context) Next() {
+    c.index++
+    s := len(c.handlers)
+    for ; c.index < s; c.index++ {
+        c.handlers[c.index](c)
+    }
+}
+```
+
+index主要是记录中间件的位置，当前执行到了第几个中间件
+
+next()就是向下一个中间件进行执行
+
+这样子就可以满足我们上诉说的中间件的执行过程
+
+详细的再说一遍过程
+
+- c.index++，c.index 变为 0
+- 0 < 3，调用 c.handlers[0]，即 A
+- 执行 part1，调用 c.Next()
+- c.index++，c.index 变为 1
+- 1 < 3，调用 c.handlers[1]，即 B
+- 执行 part3，调用 c.Next()
+- c.index++，c.index 变为 2
+- 2 < 3，调用 c.handlers[2]，即Handler
+- Handler 调用完毕，返回到 B 中的 part4，执行 part4
+- part4 执行完毕，返回到 A 中的 part2，执行 part2
+- part2 执行完毕，结束。
+
+
+
+```
+// Use is defined to add middleware to the group
+func (group *RouterGroup) Use(middlewares ...HandlerFunc) {
+    group.middlewares = append(group.middlewares, middlewares...)
+}
+
+func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+    var middlewares []HandlerFunc
+    for _, group := range engine.groups {
+        if strings.HasPrefix(req.URL.Path, group.prefix) {
+            middlewares = append(middlewares, group.middlewares...)
+        }
+    }
+    c := newContext(w, req)
+    c.handlers = middlewares
+    engine.router.handle(c)
+}
+func (r *router) handle(c *Context) {
+    n, params := r.getRoute(c.Method, c.Path)
+
+    if n != nil {
+        key := c.Method + "-" + n.pattern
+        c.Params = params
+        c.handlers = append(c.handlers, r.handlers[key])
+    } else {
+        c.handlers = append(c.handlers, func(c *Context) {
+            c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
+        })
+    }
+    c.Next()
+}
+```
+
+设置了中间件后，映射的handler不再直接执行了，而是添加到handlers里面和中间件一起执行
+
+ServerHTTP里面当收到一个请求的时候通过前缀进行匹配路由，得到中间件，都添加到handlers，然后一一执行
+
+时间：2021/7/22

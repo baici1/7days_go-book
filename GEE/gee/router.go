@@ -70,13 +70,19 @@ func (r *router) getRoute(method string, path string) (*node, map[string]string)
 	return nil, nil
 }
 
+//当有了中间件，就不再直接执行了而是通过添加到handlers里面了
 func (r *router) handle(c *Context) {
 	n, params := r.getRoute(c.Method, c.Path) //获取请求地址和params值
 	if n != nil {
 		c.Params = params
 		key := c.Method + "-" + n.pattern
-		r.handlers[key](c) //映射对应的handler
+		c.handlers = append(c.handlers, r.handlers[key])
+		//	r.handlers[key](c) //映射对应的handler
 	} else {
-		c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
+		c.handlers = append(c.handlers, func(c *Context) {
+			c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
+		})
+
 	}
+	c.Next()
 }

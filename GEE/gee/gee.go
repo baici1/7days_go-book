@@ -2,6 +2,7 @@ package gee
 
 import (
 	"net/http"
+	"strings"
 )
 
 //包具体实现
@@ -88,6 +89,19 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// } else {
 	// 	fmt.Printf("404 NOT FOUND: %s\n", r.URL)
 	// }
+	//将路由组的中间件和函数 都放到了handlers
+	var middlewares []HandlerFunc
+	for _, group := range engine.groups {
+		//匹配路由组
+		if strings.HasPrefix(r.URL.Path, group.prefix) {
+			middlewares = append(middlewares, group.middlewares...)
+		}
+	}
 	c := newContext(w, r)
+	c.handlers = middlewares
 	engine.router.handle(c)
+}
+
+func (group *RouterGroup) Use(middlewares ...HandlerFunc) {
+	group.middlewares = append(group.middlewares, middlewares...)
 }

@@ -87,6 +87,7 @@ func main() {
 	//Days4
 	r := gee.Default()
 	//下面就是路由  参照gin框架
+	r.Use(gee.Logger())
 	r.GET("/index", func(c *gee.Context) {
 		c.HTML(http.StatusOK, "<h1>Index Page</h1>")
 	})
