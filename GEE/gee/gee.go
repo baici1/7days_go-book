@@ -2,7 +2,9 @@ package gee
 
 import (
 	"net/http"
+	"path"
 	"strings"
+	"text/template"
 )
 
 //包具体实现
@@ -27,6 +29,9 @@ type Engine struct {
 	*RouterGroup
 	router *router
 	groups []*RouterGroup //存所有分组路由
+	//模板
+	htmlTemplates *template.Template
+	funcMap       template.FuncMap
 }
 
 //初始化，创建Engine实例
@@ -99,9 +104,42 @@ func (engine *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c := newContext(w, r)
 	c.handlers = middlewares
+	c.engine = engine
 	engine.router.handle(c)
 }
 
 func (group *RouterGroup) Use(middlewares ...HandlerFunc) {
 	group.middlewares = append(group.middlewares, middlewares...)
+}
+
+//创建静态的映射关系
+func (group *RouterGroup) createStaticHandler(relativePath string, fs http.FileSystem) HandlerFunc {
+	absolutePath := path.Join(group.prefix, relativePath) //相对位置
+	//找到静态文件的相对位置
+	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
+	return func(c *Context) {
+		file := c.Param("filepath")
+		if _, err := fs.Open(file); err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		fileServer.ServeHTTP(c.Writer, c.Req)
+	}
+}
+
+//静态文件服务
+func (group *RouterGroup) Static(relativePath string, root string) {
+	hanler := group.createStaticHandler(relativePath, http.Dir(root))
+	urlPattern := path.Join(relativePath, "/*filepath")
+	group.GET(urlPattern, hanler)
+}
+
+//设置模板
+func (engine *Engine) SetFuncMap(funcMap template.FuncMap) {
+	engine.funcMap = funcMap
+}
+
+//所有的自定义模板渲染函数
+func (engine *Engine) LoadHTMLGlob(pattern string) {
+	engine.htmlTemplates = template.Must(template.New("").Funcs(engine.funcMap).ParseGlob(pattern))
 }
