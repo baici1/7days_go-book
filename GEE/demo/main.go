@@ -90,15 +90,15 @@ func main() {
 	// 	r.Run(":9999")
 	// }
 	//Days4
-	r := gee.Default()
-	//下面就是路由  参照gin框架
-	r.Use(gee.Logger())
+	// r := gee.Default()
+	// //下面就是路由  参照gin框架
+	// r.Use(gee.Logger())
 
-	r.LoadHTMLGlob("templates/*")
-	r.Static("/assets", "./static")
-	r.GET("/", func(c *gee.Context) {
-		c.HTML(http.StatusOK, "css.tmpl", nil)
-	})
+	// r.LoadHTMLGlob("templates/*")
+	// r.Static("/assets", "./static")
+	// r.GET("/", func(c *gee.Context) {
+	// 	c.HTML(http.StatusOK, "css.tmpl", nil)
+	// })
 	// v1 := r.Group("/v1")
 	// {
 
@@ -120,6 +120,16 @@ func main() {
 	// 		})
 	// 	})
 
+	//Days7
+	r := gee.Default()
+	r.GET("/", func(c *gee.Context) {
+		c.String(http.StatusOK, "Hello Geektutu\n")
+	})
+	// index out of range for testing Recovery()
+	r.GET("/panic", func(c *gee.Context) {
+		names := []string{"geektutu"}
+		c.String(http.StatusOK, names[100])
+	})
 	//跑项目
 	r.Run(":9999")
 }

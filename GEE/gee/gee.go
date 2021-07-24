@@ -42,6 +42,7 @@ func Default() *Engine {
 	engine := &Engine{router: newRouter()}
 	engine.RouterGroup = &RouterGroup{engine: engine}
 	engine.groups = []*RouterGroup{engine.RouterGroup}
+	engine.Use(Logger(), Recovery()) //使用日志和错误处理机制
 	return engine
 }
 
